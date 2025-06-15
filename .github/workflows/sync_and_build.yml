@@ -1,0 +1,60 @@
+name: Build APK from Upstream
+
+on:
+  schedule:
+    - cron: '0 */12 * * *'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get latest tag from upstream
+        id: get_tag
+        run: |
+          latest=$(git ls-remote --tags https://github.com/ArtifexSoftware/mupdf-android-viewer.git \
+            | awk -F/ '/refs\/tags\// && !/\^\{\}/ {print $NF}' \
+            | sort -V | tail -n1)
+          echo "tag=$latest" >> $GITHUB_OUTPUT
+
+      - name: Clone upstream repo at latest tag
+        run: |
+          git clone --depth 1 --branch ${{ steps.get_tag.outputs.tag }} https://github.com/ArtifexSoftware/mupdf-android-viewer.git app
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Decode keystore
+        run: |
+          echo "$KEYSTORE" | base64 -d > app/app/android.keystore
+        env:
+          KEYSTORE: ${{ secrets.KEYSTORE }}
+
+      - name: Configure signing
+        run: |
+          cat <<EOF >> app/gradle.properties
+          release_storeFile=android.keystore
+          release_storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          release_keyAlias=${{ secrets.KEY_ALIAS }}
+          release_keyPassword=${{ secrets.KEY_PASSWORD }}
+          EOF
+
+      - name: Build release APK
+        working-directory: app
+        run: ./gradlew assembleRelease
+
+      - name: Upload APKs as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: apks
+          path: app/app/build/outputs/apk/release/*.apk
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_tag.outputs.tag }}
+          files: app/app/build/outputs/apk/release/app-*-release.apk
