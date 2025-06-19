@@ -16,25 +16,38 @@ jobs:
           latest=$(git ls-remote --tags https://github.com/ArtifexSoftware/mupdf-android-viewer.git \
             | awk -F/ '/refs\/tags\// && !/\^\{\}/ {print $NF}' \
             | sort -V | tail -n1)
-          echo "tag=$latest" >> $GITHUB_OUTPUT
+          echo "LATEST_TAG=$latest" >> $GITHUB_OUTPUT
+
+      - name: Get Latest Release built
+        run: |
+          echo "LATEST_RELEASE=$(curl -qsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/releases/latest" \
+          | jq -r .tag_name)" >> $GITHUB_ENV
 
       - name: Clone upstream repo at latest tag
+        if: ${{ steps.get_tag.outputs.LATEST_TAG != env.LATEST_RELEASE }}
         run: |
-          git clone --depth 1 --branch ${{ steps.get_tag.outputs.tag }} https://github.com/ArtifexSoftware/mupdf-android-viewer.git app
-
+          git clone --depth 1 --branch ${{ steps.get_tag.outputs.LATEST_TAG }} https://github.com/ArtifexSoftware/mupdf-android-viewer.git app
+      
       - name: Set up JDK
+        if: ${{ steps.get_tag.outputs.LATEST_TAG != env.LATEST_RELEASE }}
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
       - name: Decode keystore
+        if: ${{ steps.get_tag.outputs.LATEST_TAG != env.LATEST_RELEASE }}
         run: |
           echo "$KEYSTORE" | base64 -d > app/app/android.keystore
         env:
           KEYSTORE: ${{ secrets.KEYSTORE }}
 
       - name: Configure signing
+        if: ${{ steps.get_tag.outputs.LATEST_TAG != env.LATEST_RELEASE }}
         run: |
           cat <<EOF >> app/gradle.properties
           release_storeFile=android.keystore
@@ -44,16 +57,19 @@ jobs:
           EOF
 
       - name: Build release APK
+        if: ${{ steps.get_tag.outputs.LATEST_TAG != env.LATEST_RELEASE }}
         working-directory: app
         run: ./gradlew assembleRelease
 
       - name: Upload APKs as artifacts
+        if: ${{ steps.get_tag.outputs.LATEST_TAG != env.LATEST_RELEASE }}
         uses: actions/upload-artifact@v4
         with:
           name: apks
           path: app/app/build/outputs/apk/release/*.apk
 
       - name: Create GitHub Release
+        if: ${{ steps.get_tag.outputs.LATEST_TAG != env.LATEST_RELEASE }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.get_tag.outputs.tag }}
